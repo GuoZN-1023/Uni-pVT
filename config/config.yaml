@@ -1,0 +1,37 @@
+experts:
+  gas:
+    hidden_layers: [128, 64, 32]
+    activation: relu
+    dropout: 0.10
+  liquid:
+    hidden_layers: [256, 128, 64]
+    activation: relu
+    dropout: 0.15
+  critical:
+    hidden_layers: [512, 256, 128]
+    activation: relu
+    dropout: 0.20
+
+gate:
+  hidden_layers: [128, 64]
+  activation: relu
+  dropout: 0.10
+
+model:
+  input_dim: 7
+
+training:
+  batch_size: 64
+  learning_rate: 1e-3
+  epochs: 200
+  early_stopping_patience: 20
+
+loss:
+  lambda_nonneg: 0.10
+  lambda_smooth: 0.05
+
+paths:
+  data: data/data_input.csv
+  # 下面两个路径会在 run_all.py 内被覆盖到 results/<timestamp> 下
+  save_dir: results/latest
+  scaler: results/latest/scaler.pkl
