@@ -1,8 +1,9 @@
+# utils/trainer.py
 import os
 import torch
-import plotly.graph_objects as go
-import pandas as pd
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
@@ -19,7 +20,7 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
     pretrain_epochs = int(cfg["training"].get("pretrain_epochs", 0))
     patience = int(cfg["training"]["early_stopping_patience"])
 
-    # 专家和 gate 参数拆开
+    # 拆分专家 / gate 参数
     expert_params = []
     if hasattr(model, "expert_gas"):
         expert_params += list(model.expert_gas.parameters())
@@ -36,9 +37,10 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
     optim_experts = torch.optim.Adam(expert_params, lr=lr) if pretrain_epochs > 0 else None
     optim_gate = torch.optim.Adam(gate_params, lr=lr)
 
-    # 记录各种曲线
+    # 各种记录
     train_losses, val_losses = [], []
     mse_list, nonneg_list, smooth_list = [], [], []
+    calib_bias_list, calib_slope_list = [], []
     gate_e1_list, gate_e2_list, gate_e3_list, gate_e4_list = [], [], [], []
 
     train_mae_list, val_mae_list = [], []
@@ -63,7 +65,7 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
                     raise RuntimeError("Pretraining requires (x, y, expert_id) in dataset.")
                 x = x.to(device)
                 y = y.to(device)
-                expert_ids = expert_ids.to(device).long()  # 假定为 1..4
+                expert_ids = expert_ids.to(device).long()  # 1..4
 
                 optim_experts.zero_grad()
                 _, _, expert_outputs = model(x)           # [B,4]
@@ -96,13 +98,14 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
         mse_epoch = 0.0
         nonneg_epoch = 0.0
         smooth_epoch = 0.0
+        calib_bias_epoch = 0.0
+        calib_slope_epoch = 0.0
         n_batches = 0
         w_accum = None
 
-        # 用于本 epoch 的回归指标
         train_y_true, train_y_pred = [], []
 
-        # ---------- 训练循环 ----------
+        # ---------- 训练 ----------
         for batch in train_loader:
             if len(batch) == 3:
                 x, y, _ = batch
@@ -124,13 +127,13 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
             mse_epoch += loss_dict["MSE"]
             nonneg_epoch += loss_dict["NonNeg"]
             smooth_epoch += loss_dict["Smooth"]
+            calib_bias_epoch += loss_dict.get("CalibBias", 0.0)
+            calib_slope_epoch += loss_dict.get("CalibSlope", 0.0)
             n_batches += 1
 
-            # 记录本 epoch 的预测和真值，用来算 MAE/MSE/R2
             train_y_true.append(y.detach().cpu().numpy())
             train_y_pred.append(preds.detach().cpu().numpy())
 
-            # 记录 gate 权重
             w_mean_batch = w.mean(dim=0)  # [4]
             if w_accum is None:
                 w_accum = w_mean_batch.detach()
@@ -141,8 +144,10 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
         mse_epoch /= max(n_batches, 1)
         nonneg_epoch /= max(n_batches, 1)
         smooth_epoch /= max(n_batches, 1)
+        calib_bias_epoch /= max(n_batches, 1)
+        calib_slope_epoch /= max(n_batches, 1)
 
-        # 计算 train 上的 MAE / MSE / R2
+        # 训练集 MAE/MSE/R2
         if len(train_y_true) > 0:
             y_true_tr = np.concatenate(train_y_true, axis=0).reshape(-1)
             y_pred_tr = np.concatenate(train_y_pred, axis=0).reshape(-1)
@@ -201,12 +206,14 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
             gate_e3_list.append(0.0)
             gate_e4_list.append(0.0)
 
-        # 记录到列表
+        # 记录
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         mse_list.append(mse_epoch)
         nonneg_list.append(nonneg_epoch)
         smooth_list.append(smooth_epoch)
+        calib_bias_list.append(calib_bias_epoch)
+        calib_slope_list.append(calib_slope_epoch)
 
         train_mae_list.append(train_mae)
         val_mae_list.append(val_mae)
@@ -219,12 +226,13 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
             f"[Epoch {epoch}/{total_epochs}] "
             f"TrainLoss={train_loss:.6f} ValLoss={val_loss:.6f} "
             f"MSE={mse_epoch:.6f} NonNeg={nonneg_epoch:.6f} Smooth={smooth_epoch:.6f} "
+            f"CalibBias={calib_bias_epoch:.6f} CalibSlope={calib_slope_epoch:.6f} "
             f"TrainMAE={train_mae:.6f} ValMAE={val_mae:.6f} "
             f"TrainR2={train_r2:.4f} ValR2={val_r2:.4f} "
             f"GateW={[gate_e1_list[-1], gate_e2_list[-1], gate_e3_list[-1], gate_e4_list[-1]]}"
         )
 
-        # early stopping 根据 val loss
+        # early stopping（按 ValLoss）
         if val_loss < best_val - 1e-6:
             best_val = val_loss
             epochs_no_improve = 0
@@ -245,11 +253,13 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
     fig1.update_layout(title="Train / Val Loss", xaxis_title="Epoch", yaxis_title="Loss")
     fig1.write_html(f"{save_dir}/plots/loss_curve.html")
 
-    # loss 三个分量
+    # loss 各分量
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(y=mse_list, name="MSE (data term)"))
     fig2.add_trace(go.Scatter(y=nonneg_list, name="NonNeg Penalty"))
     fig2.add_trace(go.Scatter(y=smooth_list, name="Smoothness Penalty"))
+    fig2.add_trace(go.Scatter(y=calib_bias_list, name="Calib Bias Penalty"))
+    fig2.add_trace(go.Scatter(y=calib_slope_list, name="Calib Slope Penalty"))
     fig2.update_layout(title="Loss Components", xaxis_title="Epoch", yaxis_title="Value")
     fig2.write_html(f"{save_dir}/plots/loss_components.html")
 
@@ -267,12 +277,12 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
     )
     fig3.write_html(f"{save_dir}/plots/gating_weights.html")
 
-    # MAE / R2 等指标随 epoch 变化
+    # MAE / R² 曲线
     fig4 = go.Figure()
     fig4.add_trace(go.Scatter(y=train_mae_list, name="Train MAE"))
     fig4.add_trace(go.Scatter(y=val_mae_list, name="Val MAE"))
     fig4.add_trace(go.Scatter(y=train_r2_list, name="Train R²"))
-    fig4.add_trace(go.Scatter(y=val_r2_list, name="Val R² (acc-like)"))
+    fig4.add_trace(go.Scatter(y=val_r2_list, name="Val R²"))
     fig4.update_layout(
         title="Regression Metrics over Epochs",
         xaxis_title="Epoch",
@@ -280,7 +290,7 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
     )
     fig4.write_html(f"{save_dir}/plots/metrics_curve.html")
 
-    # 写 CSV：每个 epoch 一行
+    # 写 CSV，每个 epoch 一行
     df = pd.DataFrame({
         "Epoch": list(range(1, len(train_losses) + 1)),
         "TrainLoss": train_losses,
@@ -288,6 +298,8 @@ def train_model(model, dataloaders, criterion, optimizer_unused, cfg, device, lo
         "MSE_component": mse_list,
         "NonNeg": nonneg_list,
         "Smooth": smooth_list,
+        "CalibBias": calib_bias_list,
+        "CalibSlope": calib_slope_list,
         "Train_MAE": train_mae_list,
         "Val_MAE": val_mae_list,
         "Train_MSE_metric": train_mse_metric_list,

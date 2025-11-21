@@ -1,0 +1,55 @@
+expert_col: 'no'
+experts:
+  critical:
+    activation: relu
+    dropout: 0.05
+    hidden_layers:
+    - 512
+    - 256
+    - 128
+  extra:
+    activation: relu
+    dropout: 0.05
+    hidden_layers:
+    - 512
+    - 256
+    - 128
+  gas:
+    activation: relu
+    dropout: 0.05
+    hidden_layers:
+    - 256
+    - 128
+    - 64
+  liquid:
+    activation: relu
+    dropout: 0.05
+    hidden_layers:
+    - 256
+    - 128
+    - 64
+gate:
+  activation: relu
+  dropout: 0.05
+  hidden_layers:
+  - 128
+  - 64
+loss:
+  extreme_alpha: 4.0
+  lambda_extreme: 1.0
+  lambda_nonneg: 0.05
+  lambda_relative: 0.0
+  lambda_smooth: 0.02
+model:
+  input_dim: 8
+paths:
+  data: data/Water.csv
+  save_dir: results/2025-11-21_23-44-08
+  scaler: results/2025-11-21_23-44-08/scaler.pkl
+target_col: Z (-)
+training:
+  batch_size: 128
+  early_stopping_patience: 20
+  epochs: 200
+  learning_rate: 0.0001
+  pretrain_epochs: 100

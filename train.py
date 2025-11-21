@@ -35,9 +35,11 @@ def main():
 
     save_dir = cfg["paths"]["save_dir"]
     os.makedirs(save_dir, exist_ok=True)
-    cfg["paths"]["scaler"] = cfg["paths"].get("scaler", os.path.join(save_dir, "scaler.pkl"))
+    cfg["paths"]["scaler"] = cfg["paths"].get(
+        "scaler", os.path.join(save_dir, "scaler.pkl")
+    )
 
-    # 记录本次 config
+    # 记录本次实际使用的配置
     with open(os.path.join(save_dir, "config_used.yaml"), "w") as f:
         yaml.dump(cfg, f, allow_unicode=True)
 
@@ -45,13 +47,16 @@ def main():
     dataloaders = get_dataloaders(cfg)
 
     model = FusionModel(cfg).to(device)
+
     loss_cfg = cfg.get("loss", {})
     criterion = PhysicsLoss(
         lambda_nonneg=loss_cfg.get("lambda_nonneg", 0.10),
         lambda_smooth=loss_cfg.get("lambda_smooth", 0.05),
+        lambda_extreme=loss_cfg.get("lambda_extreme", 0.0),
+        lambda_relative=loss_cfg.get("lambda_relative", 0.0),
+        extreme_alpha=loss_cfg.get("extreme_alpha", 1.0),
     )
 
-    # 这里 lr 显式转换为 float，避免 "1e-3" 字符串类型报错
     lr = float(cfg["training"]["learning_rate"])
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 

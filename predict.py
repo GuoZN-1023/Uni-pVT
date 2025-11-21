@@ -38,7 +38,7 @@ def main():
 
     save_dir = cfg["paths"]["save_dir"]
     eval_dir = os.path.join(save_dir, "eval")
-    region_dir = os.path.join(save_dir, "region_eval")  # 独立的区域分析目录
+    region_dir = os.path.join(save_dir, "region_eval")
     os.makedirs(eval_dir, exist_ok=True)
     os.makedirs(region_dir, exist_ok=True)
 
@@ -55,10 +55,13 @@ def main():
         subset_cfg=subset_cfg,
     )
 
-    # 关键一步：用实际数据的特征维度覆盖 config 里的 input_dim
+    # 让模型结构与数据维度一致
     cfg.setdefault("model", {})
     cfg["model"]["input_dim"] = dataset.input_dim
-    logger.info(f"Dataset input_dim = {dataset.input_dim}, set cfg['model']['input_dim'] accordingly.")
+    logger.info(
+        f"Dataset input_dim = {dataset.input_dim}, "
+        f"set cfg['model']['input_dim'] accordingly."
+    )
 
     n_total = len(dataset)
     n_train = int(0.8 * n_total)
@@ -73,12 +76,10 @@ def main():
     batch_size = cfg["training"]["batch_size"]
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
-    # test 集对应的 expert_id（用于作图着色 & 分区域指标）
-    full_ids = dataset.expert_ids  # numpy array, len = n_total
+    full_ids = dataset.expert_ids
     test_indices = np.array(test_set.indices, dtype=int)
-    test_expert_ids = full_ids[test_indices]  # 1..4
+    test_expert_ids = full_ids[test_indices]
 
-    # 加载模型和权重
     model = FusionModel(cfg).to(device)
     ckpt_path = os.path.join(save_dir, "checkpoints", "best_model.pt")
     if not os.path.exists(ckpt_path):
@@ -106,7 +107,6 @@ def main():
     y_true = np.concatenate(y_true_list, axis=0).reshape(-1)
     y_pred = np.concatenate(y_pred_list, axis=0).reshape(-1)
 
-    # 确保 expert_id 和 y 一一对应
     if len(test_expert_ids) != len(y_true):
         logger.warning(
             f"Length mismatch between test_expert_ids ({len(test_expert_ids)}) and y_true ({len(y_true)}). "
@@ -117,14 +117,12 @@ def main():
         y_true = y_true[:n_min]
         y_pred = y_pred[:n_min]
 
-    # ===== 整体指标（全 test） =====
     mae = mean_absolute_error(y_true, y_pred)
     mse = mean_squared_error(y_true, y_pred)
     r2 = r2_score(y_true, y_pred)
 
     logger.info(f"Test MAE={mae:.6f} MSE={mse:.6f} R2={r2:.6f}")
 
-    # 1) 保存整体指标汇总（YAML）
     metrics = {
         "MAE": float(mae),
         "MSE": float(mse),
@@ -134,7 +132,6 @@ def main():
     with open(os.path.join(eval_dir, "metrics_summary.yaml"), "w") as f:
         yaml.dump(metrics, f)
 
-    # 2) 保存真值 / 预测值 CSV（带 expert_id）
     df_pred = pd.DataFrame({
         "y_true": y_true,
         "y_pred": y_pred,
@@ -143,7 +140,6 @@ def main():
     pred_csv_path = os.path.join(eval_dir, "test_predictions.csv")
     df_pred.to_csv(pred_csv_path, index=False)
 
-    # ===== 一张图画所有点：按 expert_id 上色 =====
     df_pred["expert_id_str"] = df_pred["expert_id"].astype(str)
     color_map = {
         "1": "#E699A7",
@@ -168,7 +164,6 @@ def main():
         height=700,
     )
 
-    # 对角线 y = x
     min_val = float(min(y_true.min(), y_pred.min()))
     max_val = float(max(y_true.max(), y_pred.max()))
     fig.add_shape(
@@ -181,16 +176,12 @@ def main():
     )
     fig.update_layout(xaxis_range=[min_val, max_val], yaxis_range=[min_val, max_val])
 
-    # 散点图在 eval/ 下保存一份（整体评估）
     scatter_path = os.path.join(eval_dir, "true_vs_pred_scatter.html")
     fig.write_html(scatter_path)
 
-    # ===== 在独立路径下放图和分区域指标 =====
-    # 3) 在 region_eval 目录下再保存一份相同的散点图
     region_scatter_path = os.path.join(region_dir, "true_vs_pred_by_region.html")
     fig.write_html(region_scatter_path)
 
-    # 4) 按 expert_id 分区域计算 R2 / MAE / MSE 等指标
     region_metrics = []
     unique_ids = sorted(df_pred["expert_id"].unique())
     for eid in unique_ids:
@@ -210,19 +201,16 @@ def main():
             "R2": float(r2_g),
         })
 
-    # 保存成 CSV
     region_metrics_df = pd.DataFrame(region_metrics)
     region_metrics_csv = os.path.join(region_dir, "region_metrics.csv")
     region_metrics_df.to_csv(region_metrics_csv, index=False)
 
-    # 同时保存成 YAML（可读性好一点）
     region_metrics_yaml = os.path.join(region_dir, "region_metrics.yaml")
     with open(region_metrics_yaml, "w") as f:
         yaml.dump({"regions": region_metrics}, f)
 
     logger.info(f"Region-wise metrics saved to {region_dir}")
 
-    # ===== 小封装：写入 summary.json =====
     summary_path = os.path.join(save_dir, "summary.json")
     summary = {}
     if os.path.exists(summary_path):
@@ -232,7 +220,6 @@ def main():
         except Exception:
             summary = {}
 
-    # 整体 Test 指标
     summary.setdefault("TestMetrics", {})
     summary["TestMetrics"].update({
         "MAE": float(mae),
@@ -241,7 +228,6 @@ def main():
         "N_test": int(len(y_true)),
     })
 
-    # 区域指标：按 expert_id 分开
     summary.setdefault("RegionMetrics", {})
     for rm in region_metrics:
         key = str(rm["expert_id"])
@@ -252,7 +238,6 @@ def main():
             "R2": rm["R2"],
         }
 
-    # 记录评估相关文件路径
     summary.setdefault("EvalArtifacts", {})
     summary["EvalArtifacts"].update({
         "pred_csv": os.path.abspath(pred_csv_path),
