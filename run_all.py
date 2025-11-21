@@ -87,10 +87,12 @@ def main():
             best_row = df.loc[df["ValLoss"].idxmin()]
             summary["Best_Validation_Loss"] = float(best_row["ValLoss"])
             summary["Final_Gating_Weights"] = {
-                "Gas": float(best_row["Gate_Gas"]),
-                "Liquid": float(best_row["Gate_Liquid"]),
-                "Critical": float(best_row["Gate_Critical"]),
-            }
+   			  "Gas": float(best_row["Gate_Expert1"]),
+   			  "Liquid": float(best_row["Gate_Expert2"]),
+    		  "Critical": float(best_row["Gate_Expert3"]),
+   			  "Extra": float(best_row["Gate_Expert4"]),
+	    }
+
         except Exception as e:
             summary["Metrics_Extraction_Error"] = str(e)
 
