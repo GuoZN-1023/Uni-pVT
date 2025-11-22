@@ -25,9 +25,9 @@ Uni-pVT 是一个面向 pVT / 物性建模的深度学习小平台，当前以**
 每个专家都是一个多层全连接 MLP，门控网络接收同样的输入特征，输出四个 softmax 权重 `w₁ … w₄`。  
 最终预测为四个专家输出的加权和：
 
-\[
+$$\[
 \hat{Z}(x) = \sum_{k=1}^4 w_k(x)\, f_k(x)
-\]
+\]$$
 
 ### 1.2 两阶段训练策略
 
@@ -201,11 +201,11 @@ utils/physics_loss.py 定义了组合损失 PhysicsLoss，它包含以下部分�
 
 Weighted MSE（主数据项）
 
-对每个样本的误差 (y_pred - y_true)² 乘以权重 w_i
+对每个样本的误差 $$(y_pred - y_true)²$$ 乘以权重 $$w_i$$
 
-在普通区域，w_i ≈ 1
+在普通区域，$$w_i ≈ 1$$
 
-在 Z ≈ 1 的窄带内（默认 1 ± 0.03），w_i 会被放大到约 1 + lambda_extreme * extreme_alpha
+在 Z ≈ 1 的窄带内（默认 1 ± 0.03），$$w_i$$ 会被放大到约 $$1 + lambda_extreme * extreme_alpha$$
 
 这样训练时会更关注高密度且物理上重要的 Z≈1 区域，提升这部分的拟合精度
 
@@ -215,11 +215,11 @@ NonNeg Penalty
 
 Smooth Penalty
 
-对同一 batch 内相邻样本预测差 (y_pred[i+1] - y_pred[i])² 的平均值进行惩罚，让模型输出在特征空间上更加平滑，减少不必要的振荡。
+对同一 batch 内相邻样本预测差 $$(y_pred[i+1] - y_pred[i])²$$ 的平均值进行惩罚，让模型输出在特征空间上更加平滑，减少不必要的振荡。
 
 Relative Error Loss（可选）
 
-如果开启 lambda_relative，会额外引入相对误差 (y_pred - y_true)/|y_true| 的平方平均，适合在不同 Z 区间权重相对误差时使用；当前通常设为 0。
+如果开启 lambda_relative，会额外引入相对误差 $$(y_pred - y_true)/|y_true|$$ 的平方平均，适合在不同 Z 区间权重相对误差时使用；当前通常设为 0。
 
 通过调节 lambda_extreme 与 extreme_alpha，可以在“整体拟合”与“Z≈1 精度优先”之间进行平衡。
 
