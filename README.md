@@ -163,7 +163,8 @@ expert_col: "no"
 ---
 
 ## 5. 快速上手：一键跑完训练 + 预测
-仓库根目录下提供了一个统一入口脚本 run_all.py。
+仓库根目录下提供了一个统一入口脚本 run_all.py
+
 在终端中进入项目根目录：
 
 ```bash
@@ -174,61 +175,97 @@ python run_all.py --config config/config.yaml
 ---
 
 run_all.py 会执行以下流程：
+
 复制当前配置到新的结果目录 results/YYYY-MM-DD_HH-MM-SS/
+
 调用 train.py 进行模型训练
+
 调用 predict.py 在测试集上做预测与可视化
+
 将训练与预测的信息汇总到 summary.json 中
+
 输出示例（终端日志中）会包含：
+
 实验时间戳与结果目录
+
 设备信息（CPU/GPU）
+
 训练过程关键日志（loss、R²、gate 权重等）
+
 预测阶段的整体指标与文件路径
 
 ---
 
 ## 6. 损失函数设计
 utils/physics_loss.py 定义了组合损失 PhysicsLoss，它包含以下部分：
+
 Weighted MSE（主数据项）
+
 对每个样本的误差 (y_pred - y_true)² 乘以权重 w_i
+
 在普通区域，w_i ≈ 1
+
 在 Z ≈ 1 的窄带内（默认 1 ± 0.03），w_i 会被放大到约 1 + lambda_extreme * extreme_alpha
+
 这样训练时会更关注高密度且物理上重要的 Z≈1 区域，提升这部分的拟合精度
+
 NonNeg Penalty
+
 对预测值为负的部分施加惩罚，保证物性量（如 Z）不出现明显非物理由。
+
 Smooth Penalty
+
 对同一 batch 内相邻样本预测差 (y_pred[i+1] - y_pred[i])² 的平均值进行惩罚，让模型输出在特征空间上更加平滑，减少不必要的振荡。
+
 Relative Error Loss（可选）
+
 如果开启 lambda_relative，会额外引入相对误差 (y_pred - y_true)/|y_true| 的平方平均，适合在不同 Z 区间权重相对误差时使用；当前通常设为 0。
+
 通过调节 lambda_extreme 与 extreme_alpha，可以在“整体拟合”与“Z≈1 精度优先”之间进行平衡。
 
 ---
 
 ## 7. 结果解读方式
 可以从以下几个角度理解和诊断模型表现：
+
 整体拟合情况
+
 查看 eval/metrics_summary.yaml 中的 MAE / MSE / R²，和 true_vs_pred_scatter.html 中散点相对于对角线的分布。
+
 分区表现
+
 通过 region_eval/region_metrics.csv，观察 expert_id 为 1/2/3/4 的分区 MAE / MSE / R²，对比不同区域的难度和模型拟合情况。
+
 门控行为
+
 打开 plots/gating_weights.html，查看训练过程中 gate 对四个专家的平均权重变化，判断是否出现“某个 expert 长期几乎不用”或“门控一直平均分配”这类现象。
+
 损失分量与物理约束
+
 在 plots/loss_components.html 中检查 NonNeg / Smooth / WeightedMSE 等分量是否在一个合理量级，避免物理约束项过大导致欠拟合，也避免过小失去约束效果。
 
 ---
 
 ## 8. 参数调整经验
 如果整体 R² 不够高或散点偏离对角线，可以尝试：
+
 调小 training.learning_rate，适当增加 epochs 与 early_stopping_patience
+
 调节专家网络的层数与宽度（例如增加 critical / extra 的 hidden_layers）
+
 合理调整损失中的权重：
+
 lambda_nonneg / lambda_smooth 过大时会导致欠拟合
+
 lambda_extreme / extreme_alpha 决定了 Z≈1 区域的优先程度，过低则竖带松散，过高可能损害其它区间
+
 根据数据实际分布，微调 physics_loss.py 中 center_width，使 Z≈1 的高权重区间与真实高密度区域匹配
+
 如果只想快速看模型是否“学到了主趋势”，可以先把物理约束和加权全部关掉，只保留纯 MSE，然后再逐步加回各项正则。
 
 ## 9. 文件结构
 以下文件是在训模型需要用到的文件，省略了其他用不到的文件。
-``text
+```text
 Uni-pVT/
   ├─ config/
   │   └─ config.yaml           # 主配置文件
@@ -257,6 +294,11 @@ Uni-pVT/
           ├─ region_eval/      # 分区评估文件
           ├─ logs/             # 训练 / 预测日志
           └─ summary.json      # 实验摘要
+```
+
+---
+
+
 
 
 
