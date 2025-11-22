@@ -89,6 +89,7 @@ target_col: "Z (-)" #需要预测性质对应的列索引
 expert_col: "no" #编号
 paths:
   data: data/Water.csv #数据的相对路径
+```
 
 如果需要预测其他性质，改变对应的列索引即可
 
