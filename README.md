@@ -201,7 +201,7 @@ utils/physics_loss.py 定义了组合损失 PhysicsLoss，它包含以下部分�
 
 Weighted MSE（主数据项）
 
-对每个样本的误差 $$(y_pred - y_true)²$$ 乘以权重 $$w_i$$
+对每个样本的误差 $$(y_{pred} - y_{true})²$$ 乘以权重 $$w_i$$
 
 在普通区域，$$w_i$$ ≈ 1
 
@@ -219,7 +219,7 @@ Smooth Penalty
 
 Relative Error Loss（可选）
 
-如果开启 lambda_relative，会额外引入相对误差 $$\frac{(y_{pred} - y_{true})}{|y_{true}|}$$ 的平方平均，适合在不同 Z 区间权重相对误差时使用；当前通常设为 0。
+如果开启 lambda_relative，会额外引入相对误差 $$(y_{pred} - y_{true})/|y_{true}|$$ 的平方平均，适合在不同 Z 区间权重相对误差时使用；当前通常设为 0。
 
 通过调节 lambda_extreme 与 extreme_alpha，可以在“整体拟合”与“Z≈1 精度优先”之间进行平衡。
 
