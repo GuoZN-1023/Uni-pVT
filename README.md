@@ -59,13 +59,19 @@ Uni-pVT 是一个面向 pVT / 物性建模的深度学习小平台，当前以**
 ```bash
 #配置环境
 conda create -n pVTPred
-conda activate
+conda activate pVTPred
+```
+
+```bash
 #安装所需库
 cd ./Uni-pVT
+
 #直接安装：
 pip install torch numpy pandas scikit-learn plotly pyyaml
+
 #或者可以使用requirements安装
 pip install -r requirements.txt
+
 ```
 
 ---
