@@ -66,6 +66,7 @@ cd ./Uni-pVT
 pip install torch numpy pandas scikit-learn plotly pyyaml
 #或者可以使用requirements安装
 pip install -r requirements.txt
+```
 
 ---
 
@@ -151,6 +152,7 @@ expert_col: "no"
 # subset:
 #   type: "head"
 #   n: 30000
+```
 
 ---
 
@@ -161,6 +163,7 @@ expert_col: "no"
 ```bash
 cd Uni-pVT
 python run_all.py --config config/config.yaml
+```
 
 ---
 
