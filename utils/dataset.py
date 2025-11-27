@@ -38,20 +38,17 @@ def apply_subset(df: pd.DataFrame, subset_cfg: dict | None,
             exc = subset_cfg["exclude_expert_ids"]
             mask &= ~df[expert_col].isin(exc)
 
+    # 按随机子样本抽样
     df_sub = df[mask].copy()
 
-    # 随机抽样
-    seed = int(subset_cfg.get("seed", 42))
     frac = subset_cfg.get("fraction", None)
     max_samples = subset_cfg.get("max_samples", None)
 
     if frac is not None:
-        df_sub = df_sub.sample(frac=float(frac), random_state=seed)
+        df_sub = df_sub.sample(frac=frac, random_state=42)
 
-    if max_samples is not None:
-        max_samples = int(max_samples)
-        if len(df_sub) > max_samples:
-            df_sub = df_sub.sample(n=max_samples, random_state=seed)
+    if max_samples is not None and len(df_sub) > max_samples:
+        df_sub = df_sub.sample(n=max_samples, random_state=42)
 
     return df_sub.reset_index(drop=True)
 
@@ -89,8 +86,10 @@ class ZDataset(Dataset):
         # 先按 subset 规则筛数据
         df = apply_subset(df, subset_cfg, expert_col)
 
-        # 只保留数值列（防止字符串）
-        num_df = df.select_dtypes(include=[np.number])
+        # 只保留数值列（防止字符串），并重置索引以和 Dataset 下标对齐
+        num_df = df.select_dtypes(include=[np.number]).reset_index(drop=True)
+        # 保存一份数值 DataFrame，便于预测阶段回写原始状态变量
+        self.num_df = num_df
 
         if target_col not in num_df.columns:
             raise ValueError(f"target_col '{target_col}' must be numeric")
@@ -150,17 +149,15 @@ class ZDataset(Dataset):
 
 def get_dataloaders(cfg: dict):
     """
-    生成 train/val/test 三个 DataLoader。
-    会自动应用 cfg['subset'] 的筛选规则，并写回 cfg['model']['input_dim']。
+    根据 config 构建 train/val/test DataLoader
     """
-    set_seed(42)
-
     data_path = cfg["paths"]["data"]
     scaler_path = cfg["paths"]["scaler"]
-
     target_col = cfg.get("target_col", "Z (-)")
     expert_col = cfg.get("expert_col", "no")
     subset_cfg = cfg.get("subset", None)
+
+    set_seed(42)
 
     full_dataset = ZDataset(
         csv_path=data_path,
@@ -170,9 +167,6 @@ def get_dataloaders(cfg: dict):
         expert_col=expert_col,
         subset_cfg=subset_cfg,
     )
-
-    cfg.setdefault("model", {})
-    cfg["model"]["input_dim"] = full_dataset.input_dim
 
     n_total = len(full_dataset)
     n_train = int(0.8 * n_total)

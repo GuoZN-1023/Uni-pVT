@@ -1,6 +1,0 @@
-2025-11-21 23:47:10,511 - INFO - Device: cpu
-2025-11-21 23:47:10,552 - INFO - Dataset input_dim = 7, set cfg['model']['input_dim'] accordingly.
-2025-11-21 23:47:10,599 - INFO - Test MAE=0.014202 MSE=0.000699 R2=0.995478
-2025-11-21 23:47:10,894 - INFO - Region-wise metrics saved to results/2025-11-21_23-44-08/region_eval
-2025-11-21 23:47:10,894 - INFO - Evaluation artifacts saved to results/2025-11-21_23-44-08/eval and results/2025-11-21_23-44-08/region_eval
-2025-11-21 23:47:10,894 - INFO - Summary updated at results/2025-11-21_23-44-08/summary.json

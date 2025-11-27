@@ -1,24 +1,24 @@
 experts:
   gas:
-    hidden_layers: [256, 128, 64]
-    activation: relu
+    hidden_layers: [512, 256, 128, 64]
+    activation: gelu
     dropout: 0.05
   liquid:
-    hidden_layers: [256, 128, 64]
+    hidden_layers: [512, 256, 128, 64] 
     activation: relu
-    dropout: 0.05
+    dropout: 0.1
   critical:
-    hidden_layers: [512, 256, 128]
-    activation: relu
-    dropout: 0.05
-  extra:              # 第四个专家
+    hidden_layers: [512, 256, 128, 64]
+    activation: tanh
+    dropout: 0.1
+  extra:              
     hidden_layers: [512, 256, 128]
     activation: relu
     dropout: 0.05
 
 
 gate:
-  hidden_layers: [128, 64]
+  hidden_layers: [512, 256, 128, 64]
   activation: relu
   dropout: 0.05
 
@@ -26,26 +26,26 @@ model:
   input_dim: 8        # 这里会被 get_dataloaders 自动覆盖，不用管精确值
 
 training:
-  batch_size: 128
-  learning_rate: 0.0001
+  batch_size: 256
+  learning_rate: 0.0016875946494005715
   epochs: 200         # 第二阶段（gate 训练）的最大 epoch
   pretrain_epochs: 100 # 第一阶段专家预训练的 epoch 数
   early_stopping_patience: 20
 
 loss:
-  lambda_nonneg: 0.05
-  lambda_smooth: 0.02
-  lambda_extreme: 1.0      # 建议先从 1.0 开始
+  lambda_nonneg: 3.079894566270446e-05
+  lambda_smooth: 0.027271547503932427
+  lambda_extreme: 1.0    # 建议先从 1.0 开始
   lambda_relative: 0.0     # 暂时关掉
-  extreme_alpha: 4.0       # Z≈1 处的额外放大 ~4 倍，修正Z=1区域的预测误差
-
-
-
+  extreme_alpha: 4.0    # Z≈1 处的额外放大 ~4 倍，修正Z=1区域的预测误差
 
 paths:
   data: data/Water.csv
   save_dir: results/latest
   scaler: results/latest/scaler.pkl
 
-target_col: "Z (-)"
+target_col: "phi (-)"
 expert_col: "no"
+
+shap:
+  enabled: true

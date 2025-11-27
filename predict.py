@@ -78,6 +78,15 @@ def main():
 
     full_ids = dataset.expert_ids
     test_indices = np.array(test_set.indices, dtype=int)
+
+    # 对应测试集下标，提取原始数值状态（T、p 等），方便导出到 CSV
+    df_test_states = None
+    if hasattr(dataset, "num_df") and dataset.num_df is not None:
+        try:
+            df_test_states = dataset.num_df.iloc[test_indices].reset_index(drop=True)
+        except Exception as e:
+            # 出现问题时仅在日志中提示，不影响后续评估
+            logger.warning(f"Failed to slice dataset.num_df for test set: {e}")
     test_expert_ids = full_ids[test_indices]
 
     model = FusionModel(cfg).to(device)
@@ -107,16 +116,6 @@ def main():
     y_true = np.concatenate(y_true_list, axis=0).reshape(-1)
     y_pred = np.concatenate(y_pred_list, axis=0).reshape(-1)
 
-    if len(test_expert_ids) != len(y_true):
-        logger.warning(
-            f"Length mismatch between test_expert_ids ({len(test_expert_ids)}) and y_true ({len(y_true)}). "
-            "Will truncate to the smaller length."
-        )
-        n_min = min(len(test_expert_ids), len(y_true))
-        test_expert_ids = test_expert_ids[:n_min]
-        y_true = y_true[:n_min]
-        y_pred = y_pred[:n_min]
-
     mae = mean_absolute_error(y_true, y_pred)
     mse = mean_squared_error(y_true, y_pred)
     r2 = r2_score(y_true, y_pred)
@@ -132,11 +131,19 @@ def main():
     with open(os.path.join(eval_dir, "metrics_summary.yaml"), "w") as f:
         yaml.dump(metrics, f)
 
-    df_pred = pd.DataFrame({
-        "y_true": y_true,
-        "y_pred": y_pred,
-        "expert_id": test_expert_ids.astype(int),
-    })
+    # 构建带有原始状态变量 + 真实/预测 Z 的测试集结果表
+    if df_test_states is not None:
+        df_pred = df_test_states.copy()
+        df_pred = df_pred.reset_index(drop=True)
+        df_pred["y_true"] = y_true
+        df_pred["y_pred"] = y_pred
+        df_pred["expert_id"] = test_expert_ids.astype(int)
+    else:
+        df_pred = pd.DataFrame({
+            "y_true": y_true,
+            "y_pred": y_pred,
+            "expert_id": test_expert_ids.astype(int),
+        })
     pred_csv_path = os.path.join(eval_dir, "test_predictions.csv")
     df_pred.to_csv(pred_csv_path, index=False)
 
@@ -160,8 +167,6 @@ def main():
             "y_pred": "Predicted Z",
             "expert_id_str": "Expert ID (no)",
         },
-        width=750,
-        height=700,
     )
 
     min_val = float(min(y_true.min(), y_pred.min()))
@@ -179,16 +184,14 @@ def main():
     scatter_path = os.path.join(eval_dir, "true_vs_pred_scatter.html")
     fig.write_html(scatter_path)
 
-    region_scatter_path = os.path.join(region_dir, "true_vs_pred_by_region.html")
-    fig.write_html(region_scatter_path)
-
+    # -------- 分区域评估 --------
     region_metrics = []
-    unique_ids = sorted(df_pred["expert_id"].unique())
-    for eid in unique_ids:
+    for eid in sorted(df_pred["expert_id"].unique()):
         df_g = df_pred[df_pred["expert_id"] == eid]
+        if len(df_g) == 0:
+            continue
         y_true_g = df_g["y_true"].values
         y_pred_g = df_g["y_pred"].values
-
         mae_g = mean_absolute_error(y_true_g, y_pred_g)
         mse_g = mean_squared_error(y_true_g, y_pred_g)
         r2_g = r2_score(y_true_g, y_pred_g)
@@ -209,43 +212,25 @@ def main():
     with open(region_metrics_yaml, "w") as f:
         yaml.dump({"regions": region_metrics}, f)
 
-    logger.info(f"Region-wise metrics saved to {region_dir}")
-
+    # -------- 把路径写回 summary.json 方便查阅 --------
     summary_path = os.path.join(save_dir, "summary.json")
-    summary = {}
     if os.path.exists(summary_path):
-        try:
-            with open(summary_path, "r") as f:
-                summary = json.load(f)
-        except Exception:
-            summary = {}
-
-    summary.setdefault("TestMetrics", {})
-    summary["TestMetrics"].update({
-        "MAE": float(mae),
-        "MSE": float(mse),
-        "R2": float(r2),
-        "N_test": int(len(y_true)),
-    })
-
-    summary.setdefault("RegionMetrics", {})
-    for rm in region_metrics:
-        key = str(rm["expert_id"])
-        summary["RegionMetrics"][key] = {
-            "N": rm["N"],
-            "MAE": rm["MAE"],
-            "MSE": rm["MSE"],
-            "R2": rm["R2"],
-        }
+        with open(summary_path, "r") as f:
+            summary = json.load(f)
+    else:
+        summary = {}
 
     summary.setdefault("EvalArtifacts", {})
     summary["EvalArtifacts"].update({
+        "metrics_summary": os.path.abspath(os.path.join(eval_dir, "metrics_summary.yaml")),
         "pred_csv": os.path.abspath(pred_csv_path),
         "scatter_html": os.path.abspath(scatter_path),
     })
+
     summary.setdefault("RegionArtifacts", {})
     summary["RegionArtifacts"].update({
-        "region_scatter_html": os.path.abspath(region_scatter_path),
+        "region_scatter_html": os.path.abspath(os.path.join(region_dir, "true_vs_pred_scatter_by_region.html"))
+        if os.path.exists(os.path.join(region_dir, "true_vs_pred_scatter_by_region.html")) else "",
         "region_metrics_csv": os.path.abspath(region_metrics_csv),
         "region_metrics_yaml": os.path.abspath(region_metrics_yaml),
     })

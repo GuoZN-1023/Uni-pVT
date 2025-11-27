@@ -1,107 +1,167 @@
-import subprocess
-import datetime
+# run_all.py
 import os
 import sys
-import shutil
 import json
+import shutil
+import argparse
 import traceback
+from datetime import datetime
 import yaml
-import torch
-import pandas as pd
+import subprocess
 
-def write_log(message, log_file):
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(message + "\n")
 
-def run_command(command, log_file, section_name, cwd):
-    write_log(f"\n===== 【{section_name}】开始 ===== {datetime.datetime.now()}\n", log_file)
-    try:
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True, cwd=cwd)
-        if result.stdout:
-            write_log(result.stdout, log_file)
-        if result.stderr:
-            write_log("\n[stderr]\n" + result.stderr, log_file)
-        write_log(f"\n===== 【{section_name}】结束 ===== {datetime.datetime.now()}\n", log_file)
-    except Exception as e:
-        write_log(f"\n[EXCEPTION]: {e}\n{traceback.format_exc()}\n", log_file)
+def _ensure_dir(p: str):
+    os.makedirs(p, exist_ok=True)
 
-def get_device_info():
-    info = {
-        "Python Version": sys.version.split()[0],
-        "Torch Version": torch.__version__,
-        "CUDA Available": torch.cuda.is_available(),
-        "CUDA Device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-    }
-    return info
+
+def _append(path: str, msg: str):
+    _ensure_dir(os.path.dirname(path))
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(msg if msg.endswith("\n") else msg + "\n")
+
+
+def run_cmd(cmd, stdout_path: str, stderr_path: str, runall_log: str, cwd=None, allow_fail=False):
+    _append(runall_log, f"\n[run_all] Running: {' '.join(cmd)}")
+    _append(runall_log, f"[run_all]  stdout -> {stdout_path}")
+    _append(runall_log, f"[run_all]  stderr -> {stderr_path}")
+
+    _ensure_dir(os.path.dirname(stdout_path))
+    _ensure_dir(os.path.dirname(stderr_path))
+
+    with open(stdout_path, "a", encoding="utf-8") as out_f, open(stderr_path, "a", encoding="utf-8") as err_f:
+        out_f.write(f"\n========== CMD START: {' '.join(cmd)} ==========\n")
+        err_f.write(f"\n========== CMD START: {' '.join(cmd)} ==========\n")
+        out_f.flush(); err_f.flush()
+
+        result = subprocess.run(cmd, cwd=cwd, stdout=out_f, stderr=err_f)
+
+        out_f.write(f"========== CMD END (returncode={result.returncode}) ==========\n")
+        err_f.write(f"========== CMD END (returncode={result.returncode}) ==========\n")
+        out_f.flush(); err_f.flush()
+
+    _append(runall_log, f"[run_all] Return code: {result.returncode}")
+
+    if result.returncode != 0 and not allow_fail:
+        raise RuntimeError(f"Command failed with code {result.returncode}: {' '.join(cmd)}")
+    return result.returncode
+
 
 def main():
-    # 根目录 results
-    base_root = "results"
-    os.makedirs(base_root, exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="config/config.yaml")
+    parser.add_argument("--shap_strict", action="store_true", help="SHAP失败则整次任务失败（默认：SHAP失败只记录日志）")
+    args = parser.parse_args()
 
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    base_dir = os.path.join(base_root, timestamp)
-    for d in ["checkpoints", "logs", "plots", "results"]:
-        os.makedirs(os.path.join(base_dir, d), exist_ok=True)
+    with open(args.config, "r", encoding="utf-8") as f:
+        base_cfg = yaml.safe_load(f)
 
-    log_file = os.path.join(base_dir, "logs", "run.log")
-    with open(log_file, "w", encoding="utf-8") as f:
-        f.write(f"========== 实验日志开始 [{datetime.datetime.now()}] ==========\n")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    root_results_dir = base_cfg.get("paths", {}).get("root_results", "results")
+    exp_dir = os.path.join(root_results_dir, timestamp)
+    logs_dir = os.path.join(exp_dir, "logs")
+    _ensure_dir(exp_dir); _ensure_dir(logs_dir); _ensure_dir(os.path.join(exp_dir, "checkpoints"))
 
-    # 复制并重写配置
-    config_src = "configs/config.yaml"
-    config_dst = os.path.join(base_dir, "config_copy.yaml")
-    with open(config_src, "r") as f:
-        cfg = yaml.safe_load(f)
-    cfg["paths"]["save_dir"] = base_dir
-    cfg["paths"]["scaler"] = os.path.join(base_dir, "scaler.pkl")
-    with open(config_dst, "w") as f:
+    runall_log = os.path.join(logs_dir, "run_all.log")
+    _append(runall_log, "========== RUN_ALL START ==========")
+    _append(runall_log, f"timestamp: {timestamp}")
+    _append(runall_log, f"exp_dir:    {os.path.abspath(exp_dir)}")
+    _append(runall_log, f"base_config:{os.path.abspath(args.config)}")
+
+    cfg = dict(base_cfg)
+    cfg.setdefault("paths", {})
+    cfg["paths"]["save_dir"] = exp_dir
+    cfg["paths"]["scaler"] = os.path.join(exp_dir, "scaler.pkl")
+
+    exp_config_path = os.path.join(exp_dir, "config_used.yaml")
+    with open(exp_config_path, "w", encoding="utf-8") as f:
         yaml.dump(cfg, f, allow_unicode=True)
+    _ensure_dir("config")
+    shutil.copy(exp_config_path, os.path.join("config", "current.yaml"))
 
-    write_log(f"已复制并注入配置到 {config_dst}", log_file)
-    write_log(f"设备信息: {json.dumps(get_device_info(), ensure_ascii=False)}", log_file)
+    python_exec = sys.executable
+    train_out = os.path.join(logs_dir, "train.stdout.log")
+    train_err = os.path.join(logs_dir, "train.stderr.log")
+    pred_out = os.path.join(logs_dir, "predict.stdout.log")
+    pred_err = os.path.join(logs_dir, "predict.stderr.log")
+    shap_out = os.path.join(logs_dir, "shap.stdout.log")
+    shap_err = os.path.join(logs_dir, "shap.stderr.log")
 
-    # 训练
-    run_command(f"{sys.executable} train.py --config {config_dst}", log_file, "模型训练阶段", cwd=os.getcwd())
-    # 预测
-    run_command(f"{sys.executable} predict.py --config {config_dst}", log_file, "预测与可视化阶段", cwd=os.getcwd())
+    _append(runall_log, "\n===== STAGE: TRAIN =====")
+    run_cmd([python_exec, "train.py", "--config", exp_config_path],
+            stdout_path=train_out, stderr_path=train_err, runall_log=runall_log)
 
-    # 汇总 summary
-    summary = {
-        "Experiment_ID": timestamp,
-        "Start_Time": timestamp,
-        "Config_File": config_dst,
-        "Environment": get_device_info(),
-        "Artifacts": {
-            "Log_File": log_file,
-            "Checkpoints": os.path.join(base_dir, "checkpoints"),
-            "Plots": os.path.join(base_dir, "plots"),
-            "Results": os.path.join(base_dir, "results")
-        }
-    }
+    _append(runall_log, "\n===== STAGE: PREDICT =====")
+    run_cmd([python_exec, "predict.py", "--config", exp_config_path],
+            stdout_path=pred_out, stderr_path=pred_err, runall_log=runall_log)
 
-    metrics_csv = os.path.join(base_dir, "plots", "training_metrics.csv")
-    if os.path.exists(metrics_csv):
+    shap_cfg = cfg.get("shap", {})
+    shap_enabled = bool(shap_cfg.get("enabled", False))
+    _append(runall_log, f"\n===== STAGE: SHAP (enabled={shap_enabled}, strict={args.shap_strict}) =====")
+
+    shap_rc = None
+    if shap_enabled:
+        shap_rc = run_cmd([python_exec, "shap_analysis.py", "--config", exp_config_path],
+                          stdout_path=shap_out, stderr_path=shap_err, runall_log=runall_log,
+                          allow_fail=(not args.shap_strict))
+        if shap_rc != 0:
+            _append(runall_log, f"[run_all] SHAP failed (rc={shap_rc}). See:\n  {shap_err}\n  {os.path.join(exp_dir, 'shap', 'crash.log')}")
+    else:
+        _append(runall_log, "[run_all] SHAP disabled. Set shap.enabled: true in config to enable.")
+
+    summary_path = os.path.join(exp_dir, "summary.json")
+    summary = {}
+    if os.path.exists(summary_path):
         try:
-            df = pd.read_csv(metrics_csv)
-            best_row = df.loc[df["ValLoss"].idxmin()]
-            summary["Best_Validation_Loss"] = float(best_row["ValLoss"])
-            summary["Final_Gating_Weights"] = {
-   			  "Gas": float(best_row["Gate_Expert1"]),
-   			  "Liquid": float(best_row["Gate_Expert2"]),
-    		  "Critical": float(best_row["Gate_Expert3"]),
-   			  "Extra": float(best_row["Gate_Expert4"]),
-	    }
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary = json.load(f)
+        except Exception:
+            summary = {}
 
-        except Exception as e:
-            summary["Metrics_Extraction_Error"] = str(e)
+    summary.setdefault("RunAll", {})
+    summary["RunAll"].update({
+        "timestamp": timestamp,
+        "exp_dir": os.path.abspath(exp_dir),
+        "config_used": os.path.abspath(exp_config_path),
+        "run_all_log": os.path.abspath(runall_log),
+        "shap_enabled": shap_enabled,
+        "shap_returncode": shap_rc,
+        "logs": {
+            "train_stdout": os.path.abspath(train_out),
+            "train_stderr": os.path.abspath(train_err),
+            "predict_stdout": os.path.abspath(pred_out),
+            "predict_stderr": os.path.abspath(pred_err),
+            "shap_stdout": os.path.abspath(shap_out),
+            "shap_stderr": os.path.abspath(shap_err),
+        },
+    })
 
-    summary_path = os.path.join(base_dir, "summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=4, ensure_ascii=False)
+        json.dump(summary, f, indent=2, ensure_ascii=False)
 
-    write_log(f"\n✅ 实验完成，摘要已保存至 {summary_path}", log_file)
-    write_log(f"📁 实验目录：{base_dir}", log_file)
+    _append(runall_log, "\n✅ RUN_ALL FINISHED")
+    _append(runall_log, f"summary.json: {os.path.abspath(summary_path)}")
+    _append(runall_log, "========== RUN_ALL END ==========")
+
 
 if __name__ == "__main__":
-    main()
+    # 不往终端打印 traceback（写入 logs/run_all.log）
+    try:
+        main()
+        sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception:
+        tb = traceback.format_exc()
+        # 尽量写到最新一次 results/*/logs/run_all.log
+        try:
+            root = "results"
+            candidate = "run_all_error.log"
+            if os.path.isdir(root):
+                subdirs = sorted([d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))])
+                if subdirs:
+                    candidate = os.path.join(root, subdirs[-1], "logs", "run_all.log")
+            _append(candidate, "\n❌ RUN_ALL FAILED")
+            _append(candidate, tb)
+        except Exception:
+            pass
+        sys.exit(1)
