@@ -34,7 +34,7 @@ training:
 
 loss:
   lambda_nonneg: 3.079894566270446e-05
-  lambda_smooth: 0.027271547503932427
+  lambda_smooth: 0
   lambda_extreme: 1.0    # 建议先从 1.0 开始
   lambda_relative: 0.0     # 暂时关掉
   extreme_alpha: 4.0    # Z≈1 处的额外放大 ~4 倍，修正Z=1区域的预测误差
