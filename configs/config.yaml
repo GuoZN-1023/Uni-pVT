@@ -2,19 +2,19 @@ experts:
   gas:
     hidden_layers: [512, 256, 128, 64]
     activation: gelu
-    dropout: 0.05
+    dropout: 0
   liquid:
     hidden_layers: [512, 256, 128, 64] 
-    activation: relu
-    dropout: 0.1
+    activation: tanh
+    dropout: 0
   critical:
     hidden_layers: [512, 256, 128, 64]
-    activation: tanh
-    dropout: 0.1
+    activation: gelu
+    dropout: 0
   extra:              
     hidden_layers: [512, 256, 128]
     activation: relu
-    dropout: 0.05
+    dropout: 0
 
 
 gate:
@@ -26,14 +26,33 @@ model:
   input_dim: 8        # 这里会被 get_dataloaders 自动覆盖，不用管精确值
 
 training:
-  batch_size: 256
-  learning_rate: 0.0016875946494005715
+  batch_size: 64
+  learning_rate: 0.0001 #可以改变learning rate
   epochs: 200         # 第二阶段（gate 训练）的最大 epoch
   pretrain_epochs: 100 # 第一阶段专家预训练的 epoch 数
-  early_stopping_patience: 20
+  early_stopping_patience: 30
+  finetune_epochs: 100
+  finetune_lr_gate: 1.0e-4
+  finetune_lr_expert: 5.0e-5
+  finetune_unfreeze: ["all"]
+
+  # 区域加权（按你的 expert_id/no 编号对应）
+  region_weights:
+    1: 1.5
+    2: 1.5
+    3: 2.0
+    4: 1.0
+
+  # gate 温度退火（相变边界更清晰）
+  gate_temp_start: 1.0
+  gate_temp_end: 0.9
+  gate_temp_mode: "linear"
+
+  # 可选：让 gate 更尖（负熵惩罚），先用很小
+  lambda_entropy: 0.001
 
 loss:
-  lambda_nonneg: 3.079894566270446e-05
+  lambda_nonneg: 0
   lambda_smooth: 0
   lambda_extreme: 1.0    # 建议先从 1.0 开始
   lambda_relative: 0.0     # 暂时关掉

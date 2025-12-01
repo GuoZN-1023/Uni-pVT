@@ -11,6 +11,37 @@ from utils.trainer import train_model
 from utils.logger import get_file_logger
 
 
+def _bridge_loss_cfg_to_training(cfg: dict):
+    """
+    兼容旧配置：你的 loss 超参在 cfg["loss"]，而新版 PhysicsLoss(cfg) 默认从 cfg["training"] 里读。
+    这里做一个“桥接”，不要求你重写 config。
+    """
+    cfg.setdefault("training", {})
+    loss_cfg = cfg.get("loss", {}) or {}
+    tr = cfg["training"]
+
+    # 把旧 loss 字段映射到 training（如果 training 里已经显式写了，就不覆盖）
+    mapping = {
+        "lambda_nonneg": "lambda_nonneg",
+        "lambda_smooth": "lambda_smooth",
+        "lambda_entropy": "lambda_entropy",
+        "loss_type": "loss_type",
+        "huber_delta": "huber_delta",
+        # 下面这些如果你旧版 PhysicsLoss 用到了，但新版没用也没关系；放着不影响
+        "lambda_extreme": "lambda_extreme",
+        "lambda_relative": "lambda_relative",
+        "extreme_alpha": "extreme_alpha",
+    }
+
+    for k_loss, k_tr in mapping.items():
+        if k_tr not in tr and k_loss in loss_cfg:
+            tr[k_tr] = loss_cfg[k_loss]
+
+    # region_weights 如果你放在 cfg["loss"] 里，也桥接过去；一般建议你放在 training
+    if "region_weights" not in tr and "region_weights" in loss_cfg:
+        tr["region_weights"] = loss_cfg["region_weights"]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -33,21 +64,24 @@ def main():
 
     # 如果命令行指定了 data，覆盖配置中的路径
     if args.data is not None:
+        cfg.setdefault("paths", {})
         cfg["paths"]["data"] = args.data
 
+    # 对齐 loss 配置（关键）
+    _bridge_loss_cfg_to_training(cfg)
+
+    # 路径准备
     save_dir = cfg["paths"]["save_dir"]
     os.makedirs(save_dir, exist_ok=True)
-    cfg["paths"]["scaler"] = cfg["paths"].get(
-        "scaler", os.path.join(save_dir, "scaler.pkl")
-    )
+    os.makedirs(os.path.join(save_dir, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(save_dir, "checkpoints"), exist_ok=True)
+    os.makedirs(os.path.join(save_dir, "plots"), exist_ok=True)
 
-    # ==== 提前创建 logger，这样后面任何地方都可以用 ====
+    cfg["paths"]["scaler"] = cfg["paths"].get("scaler", os.path.join(save_dir, "scaler.pkl"))
+
+    # logger
     log_file = os.path.join(save_dir, "logs", "training.log")
     logger = get_file_logger(log_file, name="train")
-
-    # 记录本次实际使用的配置
-    with open(os.path.join(save_dir, "config_used.yaml"), "w") as f:
-        yaml.dump(cfg, f, allow_unicode=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Device: {device}")
@@ -55,37 +89,29 @@ def main():
     # 构建 DataLoader
     dataloaders = get_dataloaders(cfg)
 
-    # ==== 从数据自动检测 input_dim，并写回 cfg["model"]["input_dim"] ====
+    # 从数据自动检测 input_dim，并写回 cfg["model"]["input_dim"]
     train_loader = dataloaders["train"]
-    # random_split 返回的是 Subset，真正的 ZDataset 在 .dataset 里
     if hasattr(train_loader.dataset, "dataset"):
         full_dataset = train_loader.dataset.dataset
     else:
         full_dataset = train_loader.dataset
 
-    real_input_dim = full_dataset.input_dim
+    real_input_dim = int(full_dataset.input_dim)
     cfg.setdefault("model", {})
-    cfg["model"]["input_dim"] = int(real_input_dim)
-    logger.info(
-        f"Detected input_dim={real_input_dim}, "
-        f"set cfg['model']['input_dim'] accordingly."
-    )
-    # ==== 自动设置 input_dim 结束 ====
+    cfg["model"]["input_dim"] = real_input_dim
+    logger.info(f"Detected input_dim={real_input_dim}, set cfg['model']['input_dim'] accordingly.")
+
+    # 记录本次实际使用的配置（注意：检测到 input_dim、桥接后再写）
+    with open(os.path.join(save_dir, "config_used.yaml"), "w") as f:
+        yaml.dump(cfg, f, allow_unicode=True)
 
     # 构建模型
     model = FusionModel(cfg).to(device)
 
-    # 构建损失函数
-    loss_cfg = cfg.get("loss", {})
-    criterion = PhysicsLoss(
-        lambda_nonneg=loss_cfg.get("lambda_nonneg", 0.10),
-        lambda_smooth=loss_cfg.get("lambda_smooth", 0.05),
-        lambda_extreme=loss_cfg.get("lambda_extreme", 0.0),
-        lambda_relative=loss_cfg.get("lambda_relative", 0.0),
-        extreme_alpha=loss_cfg.get("extreme_alpha", 1.0),
-    )
+    # 构建损失函数（新版：PhysicsLoss(cfg)）
+    criterion = PhysicsLoss(cfg)
 
-    # 优化器
+    # 优化器（trainer 里会按阶段自己建 gate/expert/joint optimizer；这里保留接口不破坏调用）
     lr = float(cfg["training"]["learning_rate"])
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
