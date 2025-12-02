@@ -1,7 +1,7 @@
 # models/gate.py
 import torch
 import torch.nn as nn
-from .experts import get_activation, ResidualBlock
+from .experts import ResidualBlock
 
 
 class GateNetwork(nn.Module):
@@ -23,9 +23,12 @@ class GateNetwork(nn.Module):
     ):
         super().__init__()
 
+        self.activation_name = activation
+        self.n_experts = n_experts
+
         blocks = []
         prev_dim = input_dim
-        for h in hidden_layers:
+        for h in (hidden_layers or []):
             blocks.append(
                 ResidualBlock(
                     in_dim=prev_dim,
@@ -40,6 +43,10 @@ class GateNetwork(nn.Module):
         self.blocks = nn.Sequential(*blocks) if blocks else nn.Identity()
         self.out = nn.Linear(prev_dim, n_experts)
         self.softmax = nn.Softmax(dim=1)
+
+        # 关键：gate 最后一层初始化为 0 -> softmax 初始接近均匀，避免早期“专家塌缩/偏置”
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         z = self.blocks(x)

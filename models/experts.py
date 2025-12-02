@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 
@@ -18,7 +19,7 @@ def get_activation(name: str) -> nn.Module:
       - "softplus"
       - "identity" / "linear"
     """
-    name = (name or "relu").lower()
+    name = (name or "").lower()
     if name == "relu":
         return nn.ReLU()
     if name == "gelu":
@@ -42,6 +43,35 @@ def get_activation(name: str) -> nn.Module:
     raise ValueError(f"Unsupported activation: {name}")
 
 
+def _init_linear(linear: nn.Linear, activation: str, is_output: bool = False):
+    """
+    Activation-aware initialization for Linear layers.
+
+    - ReLU/GELU/SiLU/ELU/Mish/Softplus: Kaiming (relu-like gain)
+    - LeakyReLU: Kaiming with a=0.01
+    - Tanh: Xavier with tanh gain
+    - SELU: LeCun normal (std = 1/sqrt(fan_in))
+    - Output layer: Xavier gain=1.0 (keep outputs stable)
+    """
+    act = (activation or "relu").lower().strip()
+
+    if is_output or act in ("identity", "linear", "none"):
+        nn.init.xavier_uniform_(linear.weight, gain=1.0)
+    elif act == "tanh":
+        nn.init.xavier_uniform_(linear.weight, gain=nn.init.calculate_gain("tanh"))
+    elif act in ("leaky_relu", "lrelu"):
+        nn.init.kaiming_normal_(linear.weight, a=0.01, nonlinearity="leaky_relu")
+    elif act == "selu":
+        fan_in = linear.weight.size(1)
+        nn.init.normal_(linear.weight, mean=0.0, std=1.0 / math.sqrt(fan_in))
+    else:
+        # treat gelu/silu/elu/mish/softplus as relu-like for init gain
+        nn.init.kaiming_normal_(linear.weight, nonlinearity="relu")
+
+    if linear.bias is not None:
+        nn.init.zeros_(linear.bias)
+
+
 class ResidualBlock(nn.Module):
     """
     单层全连接残差块：
@@ -59,6 +89,8 @@ class ResidualBlock(nn.Module):
         use_batchnorm: bool = True,
     ):
         super().__init__()
+        self.activation_name = activation
+
         self.linear = nn.Linear(in_dim, out_dim)
         self.bn = nn.BatchNorm1d(out_dim) if use_batchnorm else nn.Identity()
         self.act = get_activation(activation)
@@ -70,16 +102,18 @@ class ResidualBlock(nn.Module):
         else:
             self.proj = nn.Identity()
 
+        # activation-aware init
+        _init_linear(self.linear, activation, is_output=False)
+        if isinstance(self.proj, nn.Linear):
+            _init_linear(self.proj, activation, is_output=False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 主分支
         out = self.linear(x)
         out = self.bn(out)
         out = self.act(out)
         out = self.dropout(out)
 
-        # 残差分支
         res = self.proj(x)
-
         return out + res
 
 
@@ -93,6 +127,8 @@ class ExpertNetwork(nn.Module):
         super().__init__()
         if not hidden_layers:
             raise ValueError("hidden_layers must contain at least one layer size.")
+
+        self.activation_name = activation
 
         blocks = []
         prev_dim = input_dim
@@ -110,6 +146,9 @@ class ExpertNetwork(nn.Module):
 
         self.blocks = nn.Sequential(*blocks)
         self.out = nn.Linear(prev_dim, 1)
+
+        # output init: keep regression head stable
+        _init_linear(self.out, activation="linear", is_output=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.blocks(x)
