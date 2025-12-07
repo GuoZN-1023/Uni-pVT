@@ -1,0 +1,113 @@
+experts:
+  gas:
+    hidden_layers: [512, 256, 128, 64]
+    activation: silu
+    dropout: 0
+  liquid:
+    hidden_layers: [256, 128, 64] 
+    activation: relu
+    dropout: 0
+  critical:
+    hidden_layers: [256, 128, 64]
+    activation: relu
+    dropout: 0
+  extra:              
+    hidden_layers: [256, 128, 64]
+    activation: relu
+    dropout: 0
+
+
+gate:
+  hidden_layers: [512, 256, 128, 64]
+  activation: relu
+  dropout: 0.05
+
+model:
+  input_dim: 8        # 这里会被 get_dataloaders 自动覆盖，不用管精确值
+
+training:
+  batch_size: 256
+  learning_rate: 0.0005 # 初始学习率
+  epochs: 200           # 第二阶段（gate 训练）的最大 epoch
+  pretrain_epochs: 200  # 第一阶段专家预训练的 epoch 数
+  early_stopping_patience: 20
+
+  # Stage1 pretrain（一般保持 adam 就行）
+  pretrain_optimizer: adam
+  pretrain_weight_decay: 0.0
+
+  # Stage2 gate
+  gate_optimizer: adamw
+  gate_weight_decay: 1.0e-4
+  gate_betas: [0.9, 0.99]
+
+  # Stage3 finetune
+  finetune_optimizer: adamw
+  finetune_weight_decay: 5.0e-5
+  finetune_betas: [0.9, 0.999]
+  finetune_epochs: 100
+
+  # 如果你希望只修液相专家，改这里
+  finetune_unfreeze: ["gas"]   # 或者 ["all"]
+
+  lr_schedule:
+    pretrain:
+      name: cosine
+      interval: epoch
+      eta_min: 1.0e-6
+      t_max: 200
+
+    stage2:
+      #name: cosine
+      #interval: epoch
+      #eta_min: 1.0e-6
+      #t_max: 100
+
+      name: reduce_on_plateau
+      interval: epoch
+      factor: 0.5
+      patience: 8
+      min_lr: 1.0e-6
+
+    finetune:
+      name: cosine
+      interval: epoch
+      eta_min: 1.0e-6
+      t_max: 100
+
+  # 区域加权（按你的 expert_id/no 编号对应）
+  region_weights:
+    1: 2.0
+    2: 1.0
+    3: 1.5
+    4: 1.0
+
+  # gate 温度退火（相变边界更清晰）
+  temperature_schedule:
+    stage2:
+      start: 1.0
+      end: 0.8
+    finetune:
+      start: 1.0
+      end: 0.8
+
+  # 可选：让 gate 更尖（负熵惩罚），先用很小
+  lambda_entropy: 0.001
+
+loss:
+  lambda_nonneg: 0
+  lambda_smooth: 0
+  lambda_extreme: 1.0    # 建议先从 1.0 开始
+  lambda_relative: 0.0     # 暂时关掉
+  extreme_alpha: 4.0    # Z≈1 处的额外放大 ~4 倍，修正Z=1区域的预测误差
+
+paths:
+  data: data/Water.csv
+  save_dir: results/latest
+  scaler: results/latest/scaler.pkl
+
+target_col: "S (J/mol/K)"
+expert_col: "no"
+
+shap:
+  enabled: true
